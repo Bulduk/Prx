@@ -1,203 +1,114 @@
 'use client';
 
-import { useState, useRef, useEffect, useMemo, useCallback, memo } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { House, ChartNoAxesColumn, Plus, Wallet, User, Ellipsis, Share2, MessageCircle, TrendingUp, X, CircleCheck, ArrowUpRight, ArrowDownRight, Clock, Heart } from 'lucide-react';
-import Image from 'next/image';
-
-// --- Utility ---
-function useAnimatedValue(value: number, duration: number = 0.5) {
-  const [displayValue, setDisplayValue] = useState(value);
-  const displayValueRef = useRef(value);
-  
-  useEffect(() => {
-    let startTimestamp: number;
-    let animationFrameId: number;
-    const startValue = displayValueRef.current;
-    const change = value - startValue;
-    
-    if (change === 0) return;
-
-    const step = (timestamp: number) => {
-      if (!startTimestamp) startTimestamp = timestamp;
-      const progress = Math.min((timestamp - startTimestamp) / (duration * 1000), 1);
-      
-      // Easing function (easeOutExpo)
-      const easeProgress = progress === 1 ? 1 : 1 - Math.pow(2, -10 * progress);
-      
-      const currentValue = startValue + change * easeProgress;
-      setDisplayValue(currentValue);
-      displayValueRef.current = currentValue;
-      
-      if (progress < 1) {
-        animationFrameId = window.requestAnimationFrame(step);
-      } else {
-        setDisplayValue(value);
-        displayValueRef.current = value;
-      }
-    };
-    
-    animationFrameId = window.requestAnimationFrame(step);
-    return () => window.cancelAnimationFrame(animationFrameId);
-  }, [value, duration]);
-
-  return displayValue;
-}
+import { useState, useRef, useCallback } from 'react';
+import { MarketCard, MarketCardRef, TradeSide, Market } from '@/components/MarketCard';
+import { TradeModal } from '@/components/TradeModal';
+import { useTradeEngine } from '@/hooks/useTradeEngine';
 
 // --- Mock Data ---
-const TRADER_BADGES = ['Top 5%', 'High Accuracy', 'Whale', 'Sniper', 'Rising Star'];
-
-const MARKETS = [
+const INITIAL_MARKETS: Market[] = [
   {
     id: '1',
     creator: { name: 'CryptoWhale', avatar: 'https://picsum.photos/seed/whale/100/100', badge: 'VIP' },
     question: 'Will Bitcoin hit $100k before May?',
-    yesPercent: 68,
-    noPercent: 32,
+    yesPool: 1632000,
+    noPool: 768000,
     volume: 2400000,
     participants: 1245,
     timeRemaining: '12d 4h',
-    recentActivity: [
-      { id: 'a1', user: 'Alex', avatar: 'https://picsum.photos/seed/u1/32/32', action: 'bought $500 YES', side: 'YES', amount: 500, level: 42, accuracy: 68, badge: 'Top 5%' },
-      { id: 'a2', user: 'Sarah', avatar: 'https://picsum.photos/seed/u2/32/32', action: 'bought $150 NO', side: 'NO', amount: 150, level: 15, accuracy: 54, badge: null },
-    ]
   },
   {
     id: '2',
     creator: { name: 'TechInsider', avatar: 'https://picsum.photos/seed/tech/100/100', badge: 'PRO' },
     question: 'Will Apple announce a foldable iPhone in 2026?',
-    yesPercent: 41,
-    noPercent: 59,
+    yesPool: 348500,
+    noPool: 501500,
     volume: 850000,
     participants: 432,
     timeRemaining: '45d 12h',
-    recentActivity: [
-      { id: 'a3', user: 'Mike', avatar: 'https://picsum.photos/seed/u3/32/32', action: 'bought $1k NO', side: 'NO', amount: 1000, level: 89, accuracy: 72, badge: 'Whale' },
-    ]
   },
   {
     id: '3',
     creator: { name: 'PolitiPredict', avatar: 'https://picsum.photos/seed/pol/100/100', badge: 'EXPERT' },
     question: 'Will the Fed cut rates in the next meeting?',
-    yesPercent: 82,
-    noPercent: 18,
+    yesPool: 4182000,
+    noPool: 918000,
     volume: 5100000,
     participants: 3890,
     timeRemaining: '3d 8h',
-    recentActivity: [
-      { id: 'a4', user: 'TraderX', avatar: 'https://picsum.photos/seed/u4/32/32', action: 'bought $2k YES', side: 'YES', amount: 2000, level: 55, accuracy: 61, badge: 'Sniper' },
-      { id: 'a5', user: 'Emma', avatar: 'https://picsum.photos/seed/u5/32/32', action: 'bought $50 YES', side: 'YES', amount: 50, level: 8, accuracy: 49, badge: null },
-    ]
   }
 ];
 
-const MOCK_HISTORY = [
-  { id: 'h1', question: 'Will ETH reach $4k in March?', side: 'YES', entryPrice: 45, result: 'WIN', pnl: 120, timestamp: '2 days ago' },
-  { id: 'h2', question: 'Will SpaceX launch Starship this week?', side: 'NO', entryPrice: 30, result: 'LOSS', pnl: -50, timestamp: '1 week ago' },
-  { id: 'h3', question: 'Will OpenAI release GPT-5 in 2025?', side: 'YES', entryPrice: 60, result: 'WIN', pnl: 80, timestamp: '2 weeks ago' },
-];
+export default function FeedPage() {
+  const { placeTrade } = useTradeEngine();
+  
+  // Keep track of market card refs for atomic updates
+  const marketRefs = useRef<Record<string, MarketCardRef | null>>({});
+  
+  // Modal State
+  const [modalState, setModalState] = useState<{
+    isOpen: boolean;
+    market: Market | null;
+    side: TradeSide;
+  }>({
+    isOpen: false,
+    market: null,
+    side: 'YES'
+  });
 
-// --- Components ---
+  const handleOpenTrade = useCallback((marketId: string, side: TradeSide) => {
+    const market = INITIAL_MARKETS.find(m => m.id === marketId);
+    if (market) {
+      setModalState({ isOpen: true, market, side });
+    }
+  }, []);
 
-const AnimatedNumber = memo(function AnimatedNumber({ value, prefix = '', suffix = '', decimals = 2, className = '' }: { value: number, prefix?: string, suffix?: string, decimals?: number, className?: string }) {
-  const spanRef = useRef<HTMLSpanElement>(null);
-  const currentValue = useRef(value);
+  const handleCloseModal = useCallback(() => {
+    setModalState(prev => ({ ...prev, isOpen: false }));
+  }, []);
 
-  useEffect(() => {
-    let startTimestamp: number;
-    let animationFrameId: number;
-    const startValue = currentValue.current;
-    const change = value - startValue;
+  const handleConfirmTrade = useCallback(async (marketId: string, side: TradeSide, amount: number) => {
+    const result = await placeTrade(marketId, side, amount);
     
-    if (change === 0) return;
-
-    const step = (timestamp: number) => {
-      if (!startTimestamp) startTimestamp = timestamp;
-      const progress = Math.min((timestamp - startTimestamp) / 300, 1);
-      const easeProgress = progress === 1 ? 1 : 1 - Math.pow(2, -10 * progress);
-      
-      currentValue.current = startValue + change * easeProgress;
-      
-      if (spanRef.current) {
-        spanRef.current.textContent = `${prefix}${currentValue.current.toFixed(decimals)}${suffix}`;
+    if (result.success) {
+      // Atomic UI Update: Call the specific market card's imperative handle
+      // This updates the UI without triggering a React re-render of the feed
+      const cardRef = marketRefs.current[marketId];
+      if (cardRef) {
+        cardRef.applyTrade(side, amount);
       }
-      
-      if (progress < 1) {
-        animationFrameId = window.requestAnimationFrame(step);
-      } else {
-        currentValue.current = value;
-        if (spanRef.current) {
-          spanRef.current.textContent = `${prefix}${value.toFixed(decimals)}${suffix}`;
-        }
-      }
-    };
-    
-    animationFrameId = window.requestAnimationFrame(step);
-    return () => window.cancelAnimationFrame(animationFrameId);
-  }, [value, prefix, suffix, decimals]);
-
-  return <span ref={spanRef} className={className}>{prefix}{value.toFixed(decimals)}{suffix}</span>;
-});
-
-const AnimatedCurrency = memo(function AnimatedCurrency({ value, className = '' }: { value: number, className?: string }) {
-  const spanRef = useRef<HTMLSpanElement>(null);
-  const currentValue = useRef(value);
-
-  useEffect(() => {
-    let startTimestamp: number;
-    let animationFrameId: number;
-    const startValue = currentValue.current;
-    const change = value - startValue;
-    
-    if (change === 0) return;
-
-    const step = (timestamp: number) => {
-      if (!startTimestamp) startTimestamp = timestamp;
-      const progress = Math.min((timestamp - startTimestamp) / 300, 1);
-      const easeProgress = progress === 1 ? 1 : 1 - Math.pow(2, -10 * progress);
-      
-      currentValue.current = startValue + change * easeProgress;
-      
-      if (spanRef.current) {
-        spanRef.current.textContent = formatCurrency(Math.round(currentValue.current));
-      }
-      
-      if (progress < 1) {
-        animationFrameId = window.requestAnimationFrame(step);
-      } else {
-        currentValue.current = value;
-        if (spanRef.current) {
-          spanRef.current.textContent = formatCurrency(Math.round(value));
-        }
-      }
-    };
-    
-    animationFrameId = window.requestAnimationFrame(step);
-    return () => window.cancelAnimationFrame(animationFrameId);
-  }, [value]);
-
-  return <span ref={spanRef} className={className}>{formatCurrency(Math.round(value))}</span>;
-});
-
-const SimpleLineChart = memo(function SimpleLineChart({ data, isPositive }: { data: number[], isPositive: boolean }) {
-  const max = Math.max(...data);
-  const min = Math.min(...data);
-  const range = max - min || 1;
-  const points = data.map((val, i) => {
-    const x = (i / (data.length - 1)) * 100;
-    const y = 100 - ((val - min) / range) * 100;
-    return `${x},${y}`;
-  }).join(' ');
-
-  const color = isPositive ? '#00FF88' : '#FF3366';
+    } else {
+      // Handle error (e.g., show toast)
+      console.error(result.error);
+    }
+  }, [placeTrade]);
 
   return (
-    <div className="w-full h-16 relative mt-6">
-      <svg viewBox="0 -5 100 110" preserveAspectRatio="none" className="w-full h-full overflow-visible">
-        <motion.polyline
-          initial={{ pathLength: 0, opacity: 0 }}
-          animate={{ pathLength: 1, opacity: 1 }}
-          transition={{ duration: 1.5, ease: "easeInOut" }}
+    <main className="bg-black min-h-screen text-white">
+      {/* TikTok-style Snap Scrolling Container */}
+      <div className="h-screen w-full overflow-y-scroll snap-y snap-mandatory hide-scrollbar">
+        {INITIAL_MARKETS.map((market) => (
+          <MarketCard 
+            key={market.id}
+            ref={(el) => {
+              marketRefs.current[market.id] = el;
+            }}
+            market={market}
+            onOpenTrade={handleOpenTrade}
+          />
+        ))}
+      </div>
+
+      <TradeModal 
+        isOpen={modalState.isOpen}
+        onClose={handleCloseModal}
+        market={modalState.market}
+        initialSide={modalState.side}
+        onConfirm={handleConfirmTrade}
+      />
+    </main>
+  );
+}
           points={points}
           fill="none"
           stroke={color}
